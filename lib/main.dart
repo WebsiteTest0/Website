@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -337,7 +337,11 @@ class _MnistHomePageState extends State<MnistHomePage>
       final double r = rgbaBytes[base].toDouble();
       final double g = rgbaBytes[base + 1].toDouble();
       final double b = rgbaBytes[base + 2].toDouble();
-      final double luminance = (0.299 * r) + (0.587 * g) + (0.114 * b);
+      final double alpha = rgbaBytes[base + 3].toDouble() / 255.0;
+      final double compositedR = (r * alpha) + (255 * (1 - alpha));
+      final double compositedG = (g * alpha) + (255 * (1 - alpha));
+      final double compositedB = (b * alpha) + (255 * (1 - alpha));
+      final double luminance = (0.299 * compositedR) + (0.587 * compositedG) + (0.114 * compositedB);
       double value = 1 - (luminance / 255.0);
       if (value < inkThreshold) {
         value = 0;
@@ -687,15 +691,28 @@ class _MnistHomePageState extends State<MnistHomePage>
   }
 
   Widget _buildDrawStage(BuildContext context) {
-    return Center(
-      child: SizedBox(
-        width: 620,
-        child: _buildDrawingCard(context),
-      ),
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final double cardWidth = math.min(constraints.maxWidth, 620.0);
+        final double canvasDisplaySize = math.min(
+          _drawCanvasSize,
+          math.max(220.0, cardWidth - 72),
+        );
+
+        return SingleChildScrollView(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: Center(
+            child: SizedBox(
+              width: cardWidth,
+              child: _buildDrawingCard(context, canvasDisplaySize),
+            ),
+          ),
+        );
+      },
     );
   }
 
-  Widget _buildDrawingCard(BuildContext context) {
+  Widget _buildDrawingCard(BuildContext context, double canvasDisplaySize) {
     return Card(
       elevation: 0,
       color: const Color(0xFF0F172A),
@@ -718,7 +735,7 @@ class _MnistHomePageState extends State<MnistHomePage>
             ),
             const SizedBox(height: 24),
             _buildInteractiveCanvas(
-              _drawCanvasSize,
+              canvasDisplaySize,
               showExpandButton: true,
               useRepaintBoundary: true,
             ),
@@ -744,7 +761,6 @@ class _MnistHomePageState extends State<MnistHomePage>
       ),
     );
   }
-
   void _clearDrawingOnly() {
     setState(() {
       _strokes.clear();
@@ -759,7 +775,32 @@ class _MnistHomePageState extends State<MnistHomePage>
     required bool showExpandButton,
     required bool useRepaintBoundary,
   }) {
-    Widget canvasSurface = Container(
+    Widget drawingSurface = GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onPanStart: (DragStartDetails details) {
+        _startStroke(details.localPosition, displaySize);
+      },
+      onPanUpdate: (DragUpdateDetails details) {
+        _appendStroke(details.localPosition, displaySize);
+      },
+      child: CustomPaint(
+        painter: DigitPainter(
+          strokes: _strokes,
+          logicalCanvasSize: canvasSize,
+          repaint: _strokeRevision,
+        ),
+        size: Size(displaySize, displaySize),
+      ),
+    );
+
+    if (useRepaintBoundary) {
+      drawingSurface = RepaintBoundary(
+        key: _repaintKey,
+        child: drawingSurface,
+      );
+    }
+
+    final Widget canvasSurface = Container(
       width: displaySize,
       height: displaySize,
       decoration: BoxDecoration(
@@ -776,31 +817,10 @@ class _MnistHomePageState extends State<MnistHomePage>
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(22),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onPanStart: (DragStartDetails details) {
-            _startStroke(details.localPosition, displaySize);
-          },
-          onPanUpdate: (DragUpdateDetails details) {
-            _appendStroke(details.localPosition, displaySize);
-          },
-          child: CustomPaint(
-            painter: DigitPainter(
-              strokes: _strokes,
-              logicalCanvasSize: canvasSize,
-              repaint: _strokeRevision,
-            ),
-            size: Size(displaySize, displaySize),
-          ),
-        ),
+        child: drawingSurface,
       ),
     );
-    if (useRepaintBoundary) {
-      canvasSurface = RepaintBoundary(
-        key: _repaintKey,
-        child: canvasSurface,
-      );
-    }
+
     return Padding(
       padding: EdgeInsets.only(
         top: showExpandButton ? 14 : 0,
@@ -974,118 +994,121 @@ class _MnistHomePageState extends State<MnistHomePage>
     final List<int> ranking = List<int>.generate(10, (int index) => index)
       ..sort((int a, int b) => inference.probabilities[b].compareTo(inference.probabilities[a]));
 
-    return Wrap(
-      spacing: 24,
-      runSpacing: 24,
-      children: <Widget>[
-        SizedBox(
-          width: 360,
-          child: PixelGridCard(
-            title: '4. Finale Eingabe',
-            subtitle: 'Das Bild, auf dessen Basis die Vorhersage getroffen wurde.',
-            pixels: _processingResult!.centeredPixels,
-            interactive: true,
+    return SingleChildScrollView(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Wrap(
+        spacing: 24,
+        runSpacing: 24,
+        children: <Widget>[
+          SizedBox(
+            width: 360,
+            child: PixelGridCard(
+              title: '4. Finale Eingabe',
+              subtitle: 'Das Bild, auf dessen Basis die Vorhersage getroffen wurde.',
+              pixels: _processingResult!.centeredPixels,
+              interactive: true,
+            ),
           ),
-        ),
-        SizedBox(
-          width: 680,
-          child: Card(
-            elevation: 0,
-            color: const Color(0xFF0F172A),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  const Text(
-                    '4. Endergebnis',
-                    style: TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 20),
-                  Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF111827),
-                      borderRadius: BorderRadius.circular(24),
+          SizedBox(
+            width: 680,
+            child: Card(
+              elevation: 0,
+              color: const Color(0xFF0F172A),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    const Text(
+                      '4. Endergebnis',
+                      style: TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.w700),
                     ),
-                    child: Row(
-                      children: <Widget>[
-                        Text(
-                          '${inference.prediction}',
-                          style: const TextStyle(
-                            fontSize: 88,
-                            height: 1,
-                            color: Colors.white,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        const SizedBox(width: 20),
-                        Expanded(
-                          child: Text(
-                            '${(inference.probabilities[inference.prediction] * 100).toStringAsFixed(2)} % Wahrscheinlichkeit',
-                            style: const TextStyle(
-                              color: Color(0xFF86EFAC),
-                              fontSize: 24,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  ...ranking.map((int digit) {
-                    final double probability = inference.probabilities[digit];
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
+                    const SizedBox(height: 20),
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF111827),
+                        borderRadius: BorderRadius.circular(24),
+                      ),
                       child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: <Widget>[
-                          SizedBox(
-                            width: 24,
-                            child: Text(
-                              '$digit',
-                              style: const TextStyle(color: Colors.white, fontSize: 16),
+                          Text(
+                            '${inference.prediction}',
+                            style: const TextStyle(
+                              fontSize: 88,
+                              height: 1,
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
                             ),
                           ),
-                          const SizedBox(width: 12),
+                          const SizedBox(width: 20),
                           Expanded(
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(999),
-                              child: LinearProgressIndicator(
-                                value: probability.clamp(0, 1),
-                                minHeight: 18,
-                                backgroundColor: const Color(0xFF334155),
-                                valueColor: AlwaysStoppedAnimation<Color>(
-                                  digit == inference.prediction
-                                      ? const Color(0xFF34D399)
-                                      : const Color(0xFF60A5FA),
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          SizedBox(
-                            width: 74,
                             child: Text(
-                              '${(probability * 100).toStringAsFixed(1)} %',
-                              textAlign: TextAlign.right,
-                              style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 14),
+                              '${(inference.probabilities[inference.prediction] * 100).toStringAsFixed(2)} % Wahrscheinlichkeit',
+                              style: const TextStyle(
+                                color: Color(0xFF86EFAC),
+                                fontSize: 24,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
                         ],
                       ),
-                    );
-                  }),
-                ],
+                    ),
+                    const SizedBox(height: 24),
+                    ...ranking.map((int digit) {
+                      final double probability = inference.probabilities[digit];
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: Row(
+                          children: <Widget>[
+                            SizedBox(
+                              width: 24,
+                              child: Text(
+                                '$digit',
+                                style: const TextStyle(color: Colors.white, fontSize: 16),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(999),
+                                child: LinearProgressIndicator(
+                                  value: probability.clamp(0, 1),
+                                  minHeight: 18,
+                                  backgroundColor: const Color(0xFF334155),
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    digit == inference.prediction
+                                        ? const Color(0xFF34D399)
+                                        : const Color(0xFF60A5FA),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            SizedBox(
+                              width: 74,
+                              child: Text(
+                                '${(probability * 100).toStringAsFixed(1)} %',
+                                textAlign: TextAlign.right,
+                                style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 14),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                  ],
+                ),
               ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
-
   String _stageTitle(DemoStage stage) {
     switch (stage) {
       case DemoStage.draw:
@@ -1420,13 +1443,34 @@ class PixelGridCard extends StatefulWidget {
 }
 
 class _PixelGridCardState extends State<PixelGridCard> {
+  static const int _gridSize = 28;
   int? _hoveredIndex;
+
+  void _setHoveredIndex(int? index) {
+    if (_hoveredIndex == index) {
+      return;
+    }
+
+    setState(() {
+      _hoveredIndex = index;
+    });
+  }
+
+  void _updateHoveredFromPosition(Offset localPosition, double dimension) {
+    final int x = (localPosition.dx / dimension * _gridSize).floor();
+    final int y = (localPosition.dy / dimension * _gridSize).floor();
+    if (x < 0 || y < 0 || x >= _gridSize || y >= _gridSize) {
+      return;
+    }
+
+    _setHoveredIndex((y * _gridSize) + x);
+  }
 
   @override
   Widget build(BuildContext context) {
     final int? hoveredIndex = _hoveredIndex;
     final String hoverText = hoveredIndex == null
-        ? 'Hover ueber ein Pixel.'
+        ? 'Hover oder tippe auf ein Pixel.'
         : 'Pixel (${hoveredIndex % 28}, ${hoveredIndex ~/ 28}) = ${widget.pixels[hoveredIndex].toStringAsFixed(3)}';
 
     return Card(
@@ -1453,46 +1497,60 @@ class _PixelGridCardState extends State<PixelGridCard> {
             else
               const SizedBox(height: 20),
             const SizedBox(height: 12),
-            SizedBox.square(
-              dimension: 308,
-              child: GridView.builder(
-                physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 28,
-                  crossAxisSpacing: 1,
-                  mainAxisSpacing: 1,
-                ),
-                itemCount: 28 * 28,
-                itemBuilder: (BuildContext context, int index) {
-                  final double value = widget.pixels.length > index ? widget.pixels[index].clamp(0, 1) : 0;
-                  final Color color = Color.lerp(Colors.white, Colors.black, value)!;
-                  return MouseRegion(
-                    onEnter: widget.interactive
-                        ? (_) {
-                            setState(() {
-                              _hoveredIndex = index;
-                            });
+            LayoutBuilder(
+              builder: (BuildContext context, BoxConstraints constraints) {
+                final double gridDimension = math.min(constraints.maxWidth, 308.0);
+                return SizedBox.square(
+                  dimension: gridDimension,
+                  child: Listener(
+                    behavior: HitTestBehavior.opaque,
+                    onPointerDown: widget.interactive
+                        ? (PointerDownEvent event) {
+                            _updateHoveredFromPosition(event.localPosition, gridDimension);
                           }
                         : null,
-                    onExit: widget.interactive
-                        ? (_) {
-                            setState(() {
-                              _hoveredIndex = null;
-                            });
+                    onPointerMove: widget.interactive
+                        ? (PointerMoveEvent event) {
+                            _updateHoveredFromPosition(event.localPosition, gridDimension);
                           }
                         : null,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: color,
-                        border: Border.all(
-                          color: hoveredIndex == index ? const Color(0xFF0F766E) : const Color(0xFFE2E8F0),
-                          width: hoveredIndex == index ? 1.4 : 0.35,
-                        ),
+                    child: GridView.builder(
+                      physics: const NeverScrollableScrollPhysics(),
+                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 28,
+                        crossAxisSpacing: 1,
+                        mainAxisSpacing: 1,
                       ),
+                      itemCount: 28 * 28,
+                      itemBuilder: (BuildContext context, int index) {
+                        final double value = widget.pixels.length > index ? widget.pixels[index].clamp(0, 1) : 0;
+                        final Color color = Color.lerp(Colors.white, Colors.black, value)!;
+                        return MouseRegion(
+                          onEnter: widget.interactive
+                              ? (_) {
+                                  _setHoveredIndex(index);
+                                }
+                              : null,
+                          onExit: widget.interactive
+                              ? (_) {
+                                  _setHoveredIndex(null);
+                                }
+                              : null,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: color,
+                              border: Border.all(
+                                color: hoveredIndex == index ? const Color(0xFF0F766E) : const Color(0xFFE2E8F0),
+                                width: hoveredIndex == index ? 1.4 : 0.35,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
                     ),
-                  );
-                },
-              ),
+                  ),
+                );
+              },
             ),
           ],
         ),
@@ -1701,6 +1759,9 @@ class DigitPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant DigitPainter oldDelegate) => true;
 }
+
+
+
 
 
 
